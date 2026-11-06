@@ -1,6 +1,6 @@
-import {months,salaries,expenses,income,frequencies,people,money,signed,iso,today,cents,empty,id,totals,sum,monthly,salaryRows,dueDate,occurrences,togglePayment,validate,demo} from './model.js';
-import {derive,seal,openVault,randomSalt} from './vault.js';
-import {line,bars,donut,colors,esc} from './charts.js';
+import {months,salaries,expenses,income,frequencies,people,money,signed,iso,today,cents,empty,id,totals,sum,monthly,salaryRows,dueDate,occurrences,togglePayment,recordMonthlyExpenses,validate,demo} from './model.js?v=5';
+import {derive,seal,openVault,deviceKey} from './vault.js?v=5';
+import {line,bars,donut,colors,esc} from './charts.js?v=5';
 import {icon} from './icons.js';
 
 const storageKey='simplexbudget.vault.v1';
@@ -8,7 +8,7 @@ const $=selector=>document.querySelector(selector);
 const main=$('#main'),nav=$('#nav'),header=$('#header'),modal=$('#modal');
 const now=today();
 const state={page:'home',month:now.slice(0,7),year:Number(now.slice(0,4)),person:0,compare:false,salaryKind:'',period:'month',dueFilter:'open',filter:{type:'',category:'',q:'',from:'',to:''}};
-let mode='locked',data=null,key=null,salt=null,busy=false,notice,installEvent,hiddenAt=0,storageError='';
+let mode='locked',data=null,key=null,busy=false,notice,installEvent,storageError='';
 const names={home:'Home',movements:'Movimenti',salary:'Stipendi',due:'Scadenze',charts:'Grafici',settings:'Impostazioni',report:'Report',categories:'Categorie'};
 const navItems=[['home','home'],['movements','list'],['add','plus'],['charts','chart'],['settings','settings']];
 const shortcutItems=[['salary','Stipendi','users','#0874e8'],['expenses','Spese','cart','#d84a5b'],['categories','Categorie','layers','#078b9e'],['due','Scadenze','calendar','#7954d7'],['charts','Grafici','chart','#276ce2'],['report','Report','file','#4a64df']];
@@ -40,14 +40,9 @@ function notify(message){
   $('#toast').textContent=message;
   clearTimeout(notice);notice=setTimeout(()=>{$('#toast').textContent='';},3800);
 }
-function stored(){
-  const raw=localStorage.getItem(storageKey);
-  return raw?JSON.parse(raw):null;
-}
-function lock(){
-  key=null;salt=null;data=null;mode='locked';state.page='home';
+function exitDemo(){
   if(modal.open)modal.close();
-  render();
+  start();
 }
 function go(page){
   if(page==='expenses'){
@@ -66,17 +61,12 @@ function monthEnd(value){
   return iso(y,m,new Date(y,m,0).getDate());
 }
 function lockView(){
-  let box;
-  try {box=stored();storageError='';} catch {storageError='Impossibile leggere l’archivio locale in questo browser.';}
-  const existing=Boolean(box);
-  return '<section class="card stack lock"><div class="brand-icon">'+icon('lock')+'</div><div><h1>'+(existing?'Apri il tuo bilancio':'Il bilancio di casa, in privato')+'</h1><p class="subtle">'+(existing?'Sblocca l’archivio con la tua password.':'Crea un archivio cifrato su questo dispositivo. Parti da un bilancio vuoto.')+'</p></div>'+
-    (!isSecureContext?'<p class="error">Serve una connessione HTTPS oppure localhost per aprire l’archivio.</p>':'')+
-    '<form class="form" data-form="unlock">'+field('password','Password','password','','required maxlength="256" autocomplete="'+(existing?'current-password':'new-password')+'" '+(existing?'':'minlength="10"'))+
-    (existing?'':field('repeat','Ripeti password','password','','required minlength="10" maxlength="256" autocomplete="new-password"'))+
-    '<p class="error" role="alert">'+esc(storageError)+'</p><button class="primary" '+(!isSecureContext||storageError?'disabled':'')+'>'+(existing?'Sblocca archivio':'Crea archivio personale')+'</button></form>'+
-    '<p class="subtle">Conserva la password. L’archivio e i backup cifrati richiedono la password usata per crearli.</p>'+
-    button('Prova con dati demo','demo')+
-    (!existing&&isSecureContext&&!storageError?button('Ripristina un backup','import'):'')+'</section>';
+  return '<section class="card stack lock"><div class="brand-icon">'+icon('lock')+'</div><h1>Recupera il tuo archivio</h1>'+
+    (storageError?'<p class="error">'+esc(storageError)+'</p>':
+      '<p class="subtle">Inserisci la vecchia password una sola volta per conservare i tuoi dati.</p>'+
+      '<form class="form" data-form="unlock">'+field('password','Vecchia password','password','','required maxlength="256" autocomplete="current-password"')+
+      '<p class="error" role="alert"></p><button class="primary">Recupera archivio</button></form>')+
+    button('Prova con dati demo','demo')+'</section>';
 }
 function home(){
   const {incoming,outgoing,balance}=totals(inMonth());
@@ -131,7 +121,7 @@ function due(){
   const upcoming=occurrences(data,horizon).filter(o=>state.dueFilter==='paid'?o.payment&&o.date.startsWith(state.month):state.dueFilter==='month'?o.date.startsWith(state.month):!o.payment);
   const plans=data.plans.filter(p=>!p.closed);
   return head('Scadenze',button('+ Nuova','add-plan','primary'))+
-    '<div class="row"><p class="subtle">Le rate entrano nel saldo al momento del pagamento.</p>'+monthInput()+'</div>'+
+    '<div class="row"><p class="subtle">Le rate automatiche entrano nel saldo alla scadenza. Le altre quando registri il pagamento.</p>'+monthInput()+'</div>'+
     segments([['open','Da pagare'],['month','Tutte del mese'],['paid','Pagate']],state.dueFilter,'due-filter')+
     '<div class="list">'+(upcoming.length?upcoming.map(o=>{
       const badge=o.payment?'<span class="badge paid">Pagata</span>':o.date<today()?'<span class="badge late">Scaduta</span>':'<span class="badge">Da pagare</span>';
@@ -179,8 +169,8 @@ function categories(){
 function settings(){
   const personal=mode==='personal';
   return head('Impostazioni')+
-    box('Archivio '+(personal?'personale':'demo'),'<p class="subtle">'+(personal?'Dati cifrati con la password e salvati in questo browser. L’archivio si blocca al riavvio della pagina o dopo cinque minuti in background.':'I dati demo sono fittizi. Le modifiche alla demo si azzerano quando esci.')+'</p>'+
-      '<div class="actions">'+(personal?button('Blocca archivio','lock')+button('Esporta backup','export')+button('Importa backup','import'):button('Esci dalla demo','lock'))+'</div>')+
+    box('Archivio '+(personal?'personale':'demo'),'<p class="subtle">'+(personal?'L’archivio è cifrato su questo browser e si apre direttamente su questo dispositivo. Il file di backup esportato è leggibile da chi lo possiede.':'I dati demo sono fittizi. Le modifiche alla demo si azzerano quando esci.')+'</p>'+
+      '<div class="actions">'+(personal?button('Esporta backup','export')+button('Importa backup','import')+button('Prova con dati demo','demo'):button('Esci dalla demo','lock'))+'</div>')+
     box('Installa sul telefono','<p class="subtle">In Chrome su Android apri il menu ⋮ e scegli “Installa app” oppure “Aggiungi a schermata Home”. Apri la PWA online la prima volta.</p>'+(installEvent?button('Installa SimplexBudget','install','primary'):'')+
       '<div class="meta" id="offline-status"></div>');
 }
@@ -190,7 +180,7 @@ function render(){
   if(mode==='locked'){
     header.innerHTML=brand();
     nav.hidden=true;
-    main.innerHTML=lockView();
+    main.innerHTML=busy?'<p>Caricamento archivio…</p>':lockView();
     return;
   }
   const late=occurrences(data,today()).some(o=>!o.payment);
@@ -228,7 +218,7 @@ function movementForm(r,type=r?.type||'out',formValues={}){
     '<div class="cols">'+amountField(r?.amount)+select('category','Categoria',type==='in'?income:expenses,category,'data-change="movement-category"')+'</div>'+
     '<div class="cols" id="salary-fields" '+(category==='Stipendio'?'':'hidden')+'>'+select('person','Persona',[[1,people[1]],[2,people[2]]],v.person||1)+select('kind','Tipo stipendio',salaries,v.kind||salaries[0])+'</div>'+
     (!r?'<div id="monthly-fields" class="stack" hidden><label class="check"><input name="repeatMonthly" type="checkbox" data-change="repeat-monthly" '+(v.repeatMonthly?'checked':'')+'> Ripeti ogni mese</label>'+
-      '<p class="subtle">Questa uscita viene registrata subito. Le successive compariranno nelle Scadenze.</p>'+
+      '<p class="subtle">Questa uscita viene registrata subito. Le successive saranno registrate alla scadenza, quando apri l’app.</p>'+
       '<div id="monthly-count" hidden>'+field('monthlyCount','Numero totale di rate (inclusa questa)','number',v.monthlyCount,'min="2" max="600" step="1"')+'</div></div>':'')+
     field('description','Descrizione','text',v.description,'maxlength="100"')+noteField(v.notes)+
     formEnd('Salva',r?button('Elimina','delete-movement','danger','data-id="'+r.id+'"'):'')+'</form>');
@@ -245,6 +235,7 @@ function planForm(p){
     select('step','Frequenza',[[0,frequencies[0]],[1,frequencies[1]],[2,frequencies[2]],[3,frequencies[3]],[12,frequencies[12]]],p?.step??1,(hasPayments?'disabled':'data-change="plan-step"'))+'</div>'+
     '<label id="count-field" '+(p?.step===0?'hidden':'')+'>Numero di rate <span class="subtle" id="count-hint">'+((p?.category??'Finanziamenti')==='Finanziamenti'?'Obbligatorio per i finanziamenti.':'Lascia vuoto per ripetere senza termine.')+'</span><input name="count" type="number" min="1" max="600" value="'+(p?.step!==0&&p?.count?p.count:'')+'" '+(hasPayments?'disabled':'')+'></label>'+
     (hasPayments?'<p class="subtle">Data iniziale, frequenza e numero di rate sono bloccati perché il piano ha pagamenti registrati.</p>':'')+
+    '<label id="plan-auto-field" class="check" '+((p?.step??1)===1?'':'hidden')+'><input name="autoMonthly" type="checkbox" '+(p?.autoThrough?'checked':'')+'> Registra automaticamente ogni mese</label>'+
     noteField(p?.notes)+formEnd('Salva',p?button(hasPayments?'Chiudi piano':'Elimina piano','delete-plan','danger','data-id="'+p.id+'"'):'')+'</form>');
 }
 function findOccurrence(k){
@@ -259,9 +250,9 @@ function occurrenceForm(o){
     formEnd(o.payment?'Annulla pagamento':'Segna pagata',o.payment?button('Modifica uscita','edit-movement','secondary','data-id="'+o.payment.id+'"'):'')+'</form>');
 }
 function importForm(){
-  show('Ripristina backup','<form class="form" data-form="import"><p class="subtle">'+(mode==='personal'?'Il backup sostituirà l’archivio su questo dispositivo. Esporta prima una copia dei dati che vuoi conservare.':'Seleziona un backup cifrato di SimplexBudget.')+'</p>'+
+  show('Ripristina backup','<form class="form" data-form="import"><p class="subtle">'+(mode==='personal'?'Il backup sostituirà l’archivio su questo dispositivo. Esporta prima una copia dei dati che vuoi conservare.':'Seleziona un backup di SimplexBudget.')+'</p>'+
     field('file','File di backup','file','','required accept=".json,application/json"')+
-    field('password','Password del backup','password','','required maxlength="256" autocomplete="off"')+
+    field('password','Password (solo per i vecchi backup cifrati)','password','','maxlength="256" autocomplete="off"')+
     (mode==='personal'?'<label class="check"><input type="checkbox" required> Confermo la sostituzione dell’archivio locale.</label>':'')+
     formEnd('Ripristina')+'</form>');
 }
@@ -270,20 +261,49 @@ function confirmDelete(kind,r){
   show(closes?'Chiudi piano':kind==='plan'?'Elimina piano':'Elimina movimento',
     '<form class="form" data-form="delete-'+kind+'" data-id="'+r.id+'"><p>'+(closes?'Le rate già pagate restano nello storico. Le scadenze non pagate di questo piano verranno chiuse.':kind==='plan'?'Vuoi eliminare il piano e le sue scadenze?':r.link?'L’uscita sarà rimossa e la scadenza tornerà da pagare.':'Vuoi eliminare questo movimento?')+'</p>'+formEnd(closes?'Conferma chiusura':'Conferma eliminazione')+'</form>');
 }
-async function save(next){
+let vaultSnapshot=null;
+async function writeArchive(next){
   validate(next);
-  if(mode==='personal'){
-    const previous=localStorage.getItem(storageKey);
-    const encrypted=JSON.stringify(await seal(next,key,salt));
-    if(previous!==vaultSnapshot||localStorage.getItem(storageKey)!==previous)throw Error('Archivio cambiato in un’altra scheda. Bloccalo e riaprilo.');
-    localStorage.setItem(storageKey,encrypted);
-    vaultSnapshot=encrypted;
-  }
+  const encrypted=JSON.stringify({...await seal(next,key),device:true});
+  if(localStorage.getItem(storageKey)!==vaultSnapshot)throw Error('Archivio cambiato in un’altra scheda. Riapri l’app.');
+  localStorage.setItem(storageKey,encrypted);
+  vaultSnapshot=encrypted;
+}
+async function save(next){
+  if(mode==='personal')await writeArchive(next);
+  else validate(next);
   data=next;
 }
-let vaultSnapshot=null;
-async function enter(next,newKey,newSalt,raw){
-  data=next;key=newKey;salt=newSalt;vaultSnapshot=raw;mode='personal';go('home');
+async function start(){
+  busy=true;
+  mode='locked';
+  storageError='';
+  render();
+  try{
+    vaultSnapshot=localStorage.getItem(storageKey);
+    const box=vaultSnapshot?JSON.parse(vaultSnapshot):null;
+    if(box&&!box.device)return;
+    key=await deviceKey();
+    const next=box?validate(await openVault(box,key)):empty();
+    if(recordMonthlyExpenses(next))await writeArchive(next);
+    data=next;
+    mode='personal';
+    state.page='home';
+  }catch{
+    storageError='Impossibile aprire l’archivio locale. Riapri l’app e riprova.';
+  }finally{busy=false;render();}
+}
+async function refreshMonthly(){
+  if(mode!=='personal'||busy)return;
+  busy=true;
+  try{
+    const next=structuredClone(data);
+    if(recordMonthlyExpenses(next)){
+      await save(next);
+      if(!modal.open)render();
+    }
+  }catch(error){notify(error.message);}
+  finally{busy=false;}
 }
 const formObject=form=>Object.fromEntries(new FormData(form));
 function updateItem(list,item){
@@ -312,38 +332,27 @@ async function submit(event){
       modal.close();render();return;
     }
     if(action==='unlock'){
-      const raw=localStorage.getItem(storageKey);
-      const box=raw?JSON.parse(raw):null;
-      if(!box&&v.password!==v.repeat)throw Error('Le password non coincidono.');
-      const freshSalt=box?.salt||randomSalt();
-      const newKey=await derive(v.password,freshSalt);
-      let next=empty(),encrypted=raw;
-      if(box){
-        try{next=validate(await openVault(box,newKey));}catch{throw Error('Password errata o archivio danneggiato.');}
-      }else{
-        encrypted=JSON.stringify(await seal(next,newKey,freshSalt));
-        if(localStorage.getItem(storageKey)!==raw)throw Error('L’archivio è cambiato. Ricarica la pagina.');
-        localStorage.setItem(storageKey,encrypted);
-      }
-      await enter(next,newKey,freshSalt,encrypted);
-      navigator.storage?.persist?.().catch(()=>{});
+      const box=JSON.parse(vaultSnapshot);
+      let next;
+      try{next=validate(await openVault(box,await derive(v.password,box.salt)));}
+      catch{throw Error('Password errata o archivio danneggiato.');}
+      key=await deviceKey();
+      recordMonthlyExpenses(next);
+      await writeArchive(next);
+      data=next;mode='personal';go('home');
       return;
     }
     if(action==='import'){
       if(!v.file?.size||v.file.size>24_000_000)throw Error('Seleziona un backup fino a 24 MB.');
-      const previous=localStorage.getItem(storageKey);
-      let box,next,newKey;
+      let next;
       try{
-        box=JSON.parse(await v.file.text());
-        newKey=await derive(v.password,box.salt);
-        next=validate(await openVault(box,newKey));
+        const box=JSON.parse(await v.file.text());
+        next=validate(box.format==='simplexbudget-v1'?await openVault(box,await derive(v.password,box.salt)):box);
       }catch{throw Error('Backup non valido oppure password errata.');}
-      const encrypted=JSON.stringify(box);
-      if(localStorage.getItem(storageKey)!==previous||(mode==='locked'&&previous))throw Error('L’archivio è cambiato. Sbloccalo per importare il backup.');
-      localStorage.setItem(storageKey,encrypted);
-      modal.close();
-      await enter(next,newKey,box.salt,encrypted);
-      notify('Backup ripristinato. Usa la password del backup.');
+      recordMonthlyExpenses(next);
+      await writeArchive(next);
+      data=next;modal.close();go('home');
+      notify('Backup ripristinato.');
       return;
     }
     const next=structuredClone(data);
@@ -359,7 +368,7 @@ async function submit(event){
       if(!previous&&type==='out'&&v.repeatMonthly&&monthlyCategories.includes(r.category)){
         const count=r.category==='Finanziamenti'?Number(v.monthlyCount):0;
         if(r.category==='Finanziamenti'&&(!Number.isInteger(count)||count<2||count>600))throw Error('Indica il numero totale di rate, inclusa questa.');
-        const plan={id:id(),description:r.description||r.category,category:r.category,notes:r.notes,amount,start:r.date,step:1,count,closed:false};
+        const plan={id:id(),description:r.description||r.category,category:r.category,notes:r.notes,amount,start:r.date,step:1,count,closed:false,autoThrough:r.date};
         next.plans.push(plan);
         r.link=plan.id+'@'+r.date;
         message='Uscita salvata e ricorrenza mensile attivata';
@@ -372,7 +381,7 @@ async function submit(event){
       const amount=cents(v.amount);
       if(!amount)throw Error('Inserisci un importo positivo con al massimo due decimali.');
       if(v.category==='Finanziamenti'&&step&&!count)throw Error('Indica il numero di rate del finanziamento.');
-      updateItem(next.plans,{id:previous?.id||id(),description:v.description.trim(),category:v.category,notes:v.notes.trim(),amount,start:v.start??previous?.start,step,count,closed:false});
+      updateItem(next.plans,{id:previous?.id||id(),description:v.description.trim(),category:v.category,notes:v.notes.trim(),amount,start:v.start??previous?.start,step,count,closed:false,autoThrough:step===1&&v.autoMonthly?(previous?.autoThrough||today()):undefined});
       message='Piano salvato';
     }else if(action==='payment'){
       const occurrence=findOccurrence(recordId);
@@ -391,6 +400,7 @@ async function submit(event){
         message='Piano eliminato';
       }
     }
+    recordMonthlyExpenses(next);
     await save(next);
     modal.close();render();notify(message);
   }catch(error){errorFor(form,error.message||'Operazione non riuscita.');}
@@ -400,12 +410,10 @@ async function submit(event){
   }
 }
 function exportBackup(){
-  const box=stored();
-  if(!box)return;
-  const url=URL.createObjectURL(new Blob([JSON.stringify(box)],{type:'application/json'}));
+  const url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'}));
   const a=document.createElement('a');a.href=url;a.download='SimplexBudget-backup-'+today()+'.json';a.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
-  notify('Backup cifrato esportato');
+  notify('Backup esportato');
 }
 function selectPoint(el){
   el.closest('.card').querySelector('.chart-detail').textContent=el.dataset.point;
@@ -426,11 +434,11 @@ document.addEventListener('click',async event=>{
         select('year','Anno',Array.from({length:300},(_,i)=>2199-i),Number(state.month.slice(0,4)))+
         '</div>'+formEnd('Applica')+'</form>');
       break;
-    case 'menu':show('Menu','<div class="list">'+Object.entries(names).map(([p,label])=>button(label,'menu-go','item','data-page="'+p+'"')).join('')+button(mode==='personal'?'Blocca archivio':'Esci dalla demo','lock')+'</div>');break;
+    case 'menu':show('Menu','<div class="list">'+Object.entries(names).map(([p,label])=>button(label,'menu-go','item','data-page="'+p+'"')).join('')+button(mode==='personal'?'Prova con dati demo':'Esci dalla demo',mode==='personal'?'demo':'lock')+'</div>');break;
     case 'menu-go':modal.close();go(page);break;
     case 'close':modal.close();break;
-    case 'demo':mode='demo';data=demo(Number(now.slice(0,4)),Number(now.slice(5,7)));state.month=now.slice(0,7);state.year=Number(now.slice(0,4));go('home');break;
-    case 'lock':lock();break;
+    case 'demo':if(modal.open)modal.close();mode='demo';data=demo(Number(now.slice(0,4)),Number(now.slice(5,7)));state.month=now.slice(0,7);state.year=Number(now.slice(0,4));go('home');break;
+    case 'lock':exitDemo();break;
     case 'add':movementForm();break;
     case 'edit-movement':if(record)movementForm(record);break;
     case 'delete-movement':if(record)confirmDelete('movement',record);break;
@@ -471,7 +479,7 @@ document.addEventListener('change',event=>{
     monthlyFields(el.form);return;
   }
   if(action==='repeat-monthly'){monthlyFields(el.form);return;}
-  if(action==='plan-step'){$('#count-field').hidden=el.value==='0';return;}
+  if(action==='plan-step'){$('#count-field').hidden=el.value==='0';$('#plan-auto-field').hidden=el.value!=='1';return;}
   if(action==='plan-category'){
     $('#count-hint').textContent=el.value==='Finanziamenti'?'Obbligatorio per i finanziamenti.':'Lascia vuoto per ripetere senza termine.';return;
   }
@@ -499,11 +507,13 @@ document.addEventListener('keydown',event=>{
 });
 modal.addEventListener('cancel',event=>{if(busy)event.preventDefault();});
 document.addEventListener('visibilitychange',()=>{
-  if(document.hidden)hiddenAt=Date.now();
-  else if(hiddenAt&&Date.now()-hiddenAt>300000&&mode==='personal'&&!busy)lock();
+  if(!document.hidden)refreshMonthly();
 });
 window.addEventListener('storage',event=>{
-  if(event.key===storageKey&&mode==='personal'&&!busy){lock();notify('Archivio aggiornato da un’altra scheda.');}
+  if(event.key===storageKey&&mode==='personal'&&!busy){
+    if(modal.open)modal.close();
+    start();
+  }
 });
 window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();installEvent=event;if(state.page==='settings')render();});
 function offlineStatus(){
@@ -514,4 +524,4 @@ if('serviceWorker' in navigator){
   navigator.serviceWorker.register('./sw.js').catch(()=>{});
   navigator.serviceWorker.addEventListener('controllerchange',offlineStatus);
 }
-render();
+start();

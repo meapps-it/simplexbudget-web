@@ -1,4 +1,4 @@
-import {money,months} from './model.js';
+import {money,months} from './model.js?v=5';
 export const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const blue='#0979ed', coral='#ec6675', green='#189969', purple='#7756ce';
 export const palette=[blue,coral,'#0e9d99',purple,'#cd7a07','#4c69bd','#289155','#b44883','#736242','#55667e'];

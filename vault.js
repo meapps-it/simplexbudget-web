@@ -16,3 +16,27 @@ export async function openVault(box,key){
   const plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:bytes(box.iv)},key,bytes(box.payload));
   return JSON.parse(decode.decode(plain));
 }
+
+export async function deviceKey(){
+  const db=await new Promise((resolve,reject)=>{
+    const request=indexedDB.open('simplexbudget-device-v1',1);
+    request.onupgradeneeded=()=>request.result.createObjectStore('keys');
+    request.onsuccess=()=>resolve(request.result);
+    request.onerror=()=>reject(request.error);
+  });
+  try{
+    const candidate=await crypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+    return await new Promise((resolve,reject)=>{
+      const tx=db.transaction('keys','readwrite');
+      const keys=tx.objectStore('keys');
+      const request=keys.get('archive');
+      let key;
+      request.onsuccess=()=>{
+        key=request.result||candidate;
+        if(!request.result)keys.add(key,'archive');
+      };
+      tx.oncomplete=()=>resolve(key);
+      tx.onabort=()=>reject(tx.error);
+    });
+  }finally{db.close();}
+}

@@ -55,6 +55,17 @@ export function togglePayment(data,occurrence,date=today()){
   if(payment)data.movements=data.movements.filter(r=>r.id!==payment.id);
   else data.movements.push({id:id(),type:'out',date,amount:plan.amount,category:plan.category,description:plan.description,notes:plan.notes,link:key});
 }
+export function recordMonthlyExpenses(data,through=today()){
+  let changed=false;
+  const automatic={...data,plans:data.plans.filter(p=>p.autoThrough&&!p.closed)};
+  for(const row of occurrences(automatic,through)){
+    if(row.date<=row.plan.autoThrough)continue;
+    if(!row.payment)togglePayment(data,row,row.date);
+    row.plan.autoThrough=row.date;
+    changed=true;
+  }
+  return changed;
+}
 const uid=value=>typeof value==='string'&&/^[a-zA-Z0-9-]{1,64}$/.test(value);
 const amount=value=>Number.isSafeInteger(value)&&value>0&&value<=999999999;
 const words=(value,max)=>typeof value==='string'&&value.length<=max;
@@ -62,7 +73,7 @@ export function validate(data){
   if(data?.version!==1||!Array.isArray(data.movements)||!Array.isArray(data.plans)||data.movements.length>50000||data.plans.length>500)throw Error('Formato dati non valido.');
   const plans=new Map();
   for(const p of data.plans){
-    if(!p||!uid(p.id)||plans.has(p.id)||!validDate(p.start)||!amount(p.amount)||!expenses.includes(p.category)||!words(p.description,100)||!p.description.trim()||!words(p.notes,500)||![0,1,2,3,12].includes(p.step)||!Number.isInteger(p.count)||p.count<0||p.count>600||(!p.step&&p.count!==1)||(p.step&&p.count&&!validDate(dueDate(p,p.count-1)))||typeof p.closed!=='boolean')throw Error('Scadenza non valida.');
+    if(!p||!uid(p.id)||plans.has(p.id)||!validDate(p.start)||!amount(p.amount)||!expenses.includes(p.category)||!words(p.description,100)||!p.description.trim()||!words(p.notes,500)||![0,1,2,3,12].includes(p.step)||!Number.isInteger(p.count)||p.count<0||p.count>600||(!p.step&&p.count!==1)||(p.step&&p.count&&!validDate(dueDate(p,p.count-1)))||typeof p.closed!=='boolean'||(p.autoThrough!=null&&(p.step!==1||!validDate(p.autoThrough))))throw Error('Scadenza non valida.');
     plans.set(p.id,p);
   }
   const seen=new Set(),links=new Set();
