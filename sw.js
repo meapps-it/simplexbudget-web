@@ -1,5 +1,5 @@
-const cacheName='simplexbudget-v3';
-const shell=['./','./index.html','./style.css','./app.js','./icons.js','./charts.js','./model.js','./vault.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
+const cacheName='simplexbudget-v4';
+const shell=['./','./index.html','./style.css','./app.js?v=4','./icons.js','./charts.js','./model.js','./vault.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(cacheName).then(cache=>cache.addAll(shell)));
 });
