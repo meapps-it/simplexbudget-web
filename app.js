@@ -206,6 +206,18 @@ function show(title,content){
   if(!modal.open)modal.showModal();
 }
 const formEnd=(label,extra='')=>'<p class="error" role="alert"></p><div class="actions"><button class="primary">'+label+'</button>'+extra+'</div>';
+const monthlyCategories=['Affitto o mutuo','Finanziamenti','Condominio','Telefonia e Internet','Luce','Gas','Acqua','Assicurazioni'];
+function monthlyFields(form){
+  const fields=form.querySelector('#monthly-fields');
+  if(!fields)return;
+  const eligible=form.elements.type.value==='out'&&monthlyCategories.includes(form.elements.category.value);
+  fields.hidden=!eligible;
+  form.elements.repeatMonthly.disabled=!eligible;
+  const loan=eligible&&form.elements.repeatMonthly.checked&&form.elements.category.value==='Finanziamenti';
+  form.querySelector('#monthly-count').hidden=!loan;
+  form.elements.monthlyCount.disabled=!loan;
+  form.elements.monthlyCount.required=loan;
+}
 function movementForm(r,type=r?.type||'out',formValues={}){
   const linked=Boolean(r?.link);
   const v={...r,...formValues};
@@ -215,8 +227,12 @@ function movementForm(r,type=r?.type||'out',formValues={}){
     '<div class="cols">'+select('type','Tipo',[['out','Uscita'],['in','Entrata']],type,linked?'disabled':'data-change="movement-type"')+dateField('date','Data',v.date||today())+'</div>'+
     '<div class="cols">'+amountField(r?.amount)+select('category','Categoria',type==='in'?income:expenses,category,'data-change="movement-category"')+'</div>'+
     '<div class="cols" id="salary-fields" '+(category==='Stipendio'?'':'hidden')+'>'+select('person','Persona',[[1,people[1]],[2,people[2]]],v.person||1)+select('kind','Tipo stipendio',salaries,v.kind||salaries[0])+'</div>'+
+    (!r?'<div id="monthly-fields" class="stack" hidden><label class="check"><input name="repeatMonthly" type="checkbox" data-change="repeat-monthly" '+(v.repeatMonthly?'checked':'')+'> Ripeti ogni mese</label>'+
+      '<p class="subtle">Questa uscita viene registrata subito. Le successive compariranno nelle Scadenze.</p>'+
+      '<div id="monthly-count" hidden>'+field('monthlyCount','Numero totale di rate (inclusa questa)','number',v.monthlyCount,'min="2" max="600" step="1"')+'</div></div>':'')+
     field('description','Descrizione','text',v.description,'maxlength="100"')+noteField(v.notes)+
     formEnd('Salva',r?button('Elimina','delete-movement','danger','data-id="'+r.id+'"'):'')+'</form>');
+  monthlyFields(modal.querySelector('form'));
   if(formValues.amount!==undefined)modal.querySelector('[name=amount]').value=formValues.amount;
 }
 function planForm(p){
@@ -340,8 +356,15 @@ async function submit(event){
       const r={id:previous?.id||id(),type,date:v.date,amount,category:v.category,description:v.description.trim(),notes:v.notes.trim()};
       if(r.category==='Stipendio'){r.person=Number(v.person);r.kind=v.kind;}
       if(previous?.link)r.link=previous.link;
+      if(!previous&&type==='out'&&v.repeatMonthly&&monthlyCategories.includes(r.category)){
+        const count=r.category==='Finanziamenti'?Number(v.monthlyCount):0;
+        if(r.category==='Finanziamenti'&&(!Number.isInteger(count)||count<2||count>600))throw Error('Indica il numero totale di rate, inclusa questa.');
+        const plan={id:id(),description:r.description||r.category,category:r.category,notes:r.notes,amount,start:r.date,step:1,count,closed:false};
+        next.plans.push(plan);
+        r.link=plan.id+'@'+r.date;
+        message='Uscita salvata e ricorrenza mensile attivata';
+      }else message='Movimento salvato';
       updateItem(next.movements,r);
-      message='Movimento salvato';
     }else if(action==='plan'){
       const previous=data.plans.find(r=>r.id===recordId);
       const step=Number(v.step??previous?.step);
@@ -444,8 +467,10 @@ document.addEventListener('change',event=>{
     movementForm(data.movements.find(r=>r.id===el.form.dataset.id),el.value,formObject(el.form));return;
   }
   if(action==='movement-category'){
-    $('#salary-fields').hidden=el.value!=='Stipendio';return;
+    $('#salary-fields').hidden=el.value!=='Stipendio';
+    monthlyFields(el.form);return;
   }
+  if(action==='repeat-monthly'){monthlyFields(el.form);return;}
   if(action==='plan-step'){$('#count-field').hidden=el.value==='0';return;}
   if(action==='plan-category'){
     $('#count-hint').textContent=el.value==='Finanziamenti'?'Obbligatorio per i finanziamenti.':'Lascia vuoto per ripetere senza termine.';return;
